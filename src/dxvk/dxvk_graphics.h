@@ -5,6 +5,7 @@
 #include "dxvk_bind_mask.h"
 #include "dxvk_constant_state.h"
 #include "dxvk_pipecache.h"
+#include "dxvk_pipecompiler.h"
 #include "dxvk_pipelayout.h"
 #include "dxvk_renderpass.h"
 #include "dxvk_resource.h"
@@ -92,19 +93,18 @@ namespace dxvk {
    * Stores a state vector and the
    * corresponding pipeline handle.
    */
-  class DxvkGraphicsPipelineInstance {
-
+  class DxvkGraphicsPipelineInstance : public RcObject {
+    friend class DxvkGraphicsPipeline;
   public:
-
-    DxvkGraphicsPipelineInstance() { }
+    
     DxvkGraphicsPipelineInstance(
-      const DxvkGraphicsPipelineStateInfo&  state,
-            VkRenderPass                    rp,
-            VkPipeline                      pipe)
-    : m_stateVector (state),
-      m_renderPass  (rp),
-      m_pipeline    (pipe) { }
-
+      const Rc<vk::DeviceFn>&               vkd,
+      const DxvkGraphicsPipelineStateInfo&  stateVector,
+            VkRenderPass                    renderPass,
+            VkPipeline                      pipeline);
+    
+    ~DxvkGraphicsPipelineInstance();
+    
     /**
      * \brief Checks for matching pipeline state
      * 
@@ -113,28 +113,47 @@ namespace dxvk {
      * \returns \c true if the specialization is compatible
      */
     bool isCompatible(
-      const DxvkGraphicsPipelineStateInfo&  state,
-            VkRenderPass                    rp) const {
-      return m_stateVector == state
-          && m_renderPass  == rp;
+      const DxvkGraphicsPipelineStateInfo&  stateVector,
+            VkRenderPass                    renderPass) const {
+      return m_renderPass  == renderPass
+          && m_stateVector == stateVector;
     }
-
+    
+    /**
+     * \brief Sets the optimized pipeline handle
+     * 
+     * If an optimized pipeline handle has already been
+     * set up, this method will fail and the new pipeline
+     * handle should be destroyed.
+     * \param [in] pipeline The optimized pipeline
+     */
+    bool setPipeline(VkPipeline pipeline) {
+      VkPipeline expected = VK_NULL_HANDLE;
+      return m_pipeline.compare_exchange_strong(expected, pipeline);
+    }
+    
     /**
      * \brief Retrieves pipeline
+     * 
+     * Returns the optimized version of the pipeline if
+     * if has been set, or the base pipeline if not.
      * \returns The pipeline handle
      */
-    VkPipeline pipeline() const {
-      return m_pipeline;
+    VkPipeline getPipeline() const {
+      return m_pipeline.load();
     }
-
+    
   private:
-
+    
+    const Rc<vk::DeviceFn> m_vkd;
+    
     DxvkGraphicsPipelineStateInfo m_stateVector;
     VkRenderPass                  m_renderPass;
-    VkPipeline                    m_pipeline;
 
+    std::atomic<VkPipeline>       m_pipeline;
+    
   };
-
+  
   
   /**
    * \brief Graphics pipeline
@@ -149,6 +168,7 @@ namespace dxvk {
     
     DxvkGraphicsPipeline(
             DxvkPipelineManager*      pipeMgr,
+      const Rc<DxvkPipelineCompiler>& compiler,
       const Rc<DxvkShader>&           vs,
       const Rc<DxvkShader>&           tcs,
       const Rc<DxvkShader>&           tes,
@@ -175,13 +195,23 @@ namespace dxvk {
      * state. If necessary, a new pipeline will be created.
      * \param [in] state Pipeline state vector
      * \param [in] renderPass The render pass
-     * \param [in,out] stats Stat counter
+     * \param [in] async Compile asynchronously
      * \returns Pipeline handle
      */
     VkPipeline getPipelineHandle(
       const DxvkGraphicsPipelineStateInfo&    state,
       const DxvkRenderPass&                   renderPass,
-            DxvkStatCounters&                 stats);
+            bool                              async);
+    
+    /**
+     * \brief Compiles optimized pipeline
+     * 
+     * Compiles an optimized version of a pipeline
+     * and makes it available to the system.
+     * \param [in] instance The pipeline instance
+     */
+    void compileInstance(
+      const Rc<DxvkGraphicsPipelineInstance>& instance);
     
   private:
     
@@ -193,7 +223,8 @@ namespace dxvk {
     
     Rc<vk::DeviceFn>        m_vkd;
     DxvkPipelineManager*    m_pipeMgr;
-
+    
+    Rc<DxvkPipelineCompiler>  m_compiler;
     Rc<DxvkPipelineLayout>  m_layout;
     Rc<DxvkShaderModule>    m_vs;
     Rc<DxvkShaderModule>    m_tcs;
@@ -207,13 +238,13 @@ namespace dxvk {
     DxvkGraphicsCommonPipelineStateInfo m_common;
     
     // List of pipeline instances, shared between threads
-    alignas(CACHE_LINE_SIZE) sync::Spinlock   m_mutex;
-    std::vector<DxvkGraphicsPipelineInstance> m_pipelines;
+    alignas(CACHE_LINE_SIZE) sync::Spinlock       m_mutex;
+    std::vector<Rc<DxvkGraphicsPipelineInstance>> m_pipelines;
     
     // Pipeline handles used for derivative pipelines
     std::atomic<VkPipeline> m_basePipeline = { VK_NULL_HANDLE };
     
-    const DxvkGraphicsPipelineInstance* findInstance(
+    DxvkGraphicsPipelineInstance* findInstance(
       const DxvkGraphicsPipelineStateInfo& state,
             VkRenderPass                   renderPass) const;
     
@@ -221,9 +252,6 @@ namespace dxvk {
       const DxvkGraphicsPipelineStateInfo& state,
             VkRenderPass                   renderPass,
             VkPipeline                     baseHandle) const;
-    
-    void destroyPipeline(
-            VkPipeline                     pipeline) const;
     
     bool validatePipelineState(
       const DxvkGraphicsPipelineStateInfo& state) const;

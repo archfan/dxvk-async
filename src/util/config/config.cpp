@@ -58,6 +58,10 @@ namespace dxvk {
     { "Overwatch.exe", {{
       { "d3d11.fakeStreamOutSupport",       "True" },
     }} },
+    /* Path of Exile                              */
+    { "PathOfExile_x64.exe", {{
+      { "dxvk.asyncPipeCompiler",           "True" },
+    }} },
   }};
 
 
