@@ -4,6 +4,8 @@ A Vulkan-based translation layer for Direct3D 10/11 which allows running 3D appl
 
 For the current status of the project, please refer to the [project wiki](https://github.com/doitsujin/dxvk/wiki).
 
+This is a reimplementation of the removed Asynchronous shader compiler. Latest implemented revision: 
+[57dab630b5e6e1517665fca81c07ae6a361c3eec](https://github.com/doitsujin/dxvk/commit/57dab630b5e6e1517665fca81c07ae6a361c3eec) 
 
 ## How to use
 In order to install a DXVK package obtained from the [release](https://github.com/doitsujin/dxvk/releases) page into a given wine prefix, run the following commands from within the DXVK directory:
